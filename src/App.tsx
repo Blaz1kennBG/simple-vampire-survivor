@@ -18,7 +18,7 @@ function App() {
             id="app"
             className="w-screen h-screen flex justify-center items-center bg-black"
         >
-            <Hud />
+            <Hud phaser={phaserRef} />
             <PhaserGame ref={phaserRef} currentActiveScene={currentScene} />
         </div>
     );
