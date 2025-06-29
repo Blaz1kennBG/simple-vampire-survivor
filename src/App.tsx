@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { IRefPhaserGame, PhaserGame } from "./PhaserGame";
 import { Hud } from "./hud/hud";
 import "../style.scss";
+import { UpgradesModal } from "./components/upgrades-modal";
 function App() {
     // The sprite can only be moved in the MainMenu Scene
     const [canMoveSprite, setCanMoveSprite] = useState(true);
@@ -18,6 +19,7 @@ function App() {
             id="app"
             className="w-screen h-screen flex justify-center items-center bg-black"
         >
+            <UpgradesModal phaser={phaserRef}/>
             <Hud phaser={phaserRef} />
             <PhaserGame ref={phaserRef} currentActiveScene={currentScene} />
         </div>

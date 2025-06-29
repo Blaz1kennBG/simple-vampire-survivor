@@ -22,7 +22,7 @@ export class BigEnemy {
     color: number;
     size: number;
     damage = 3;
-    exp = 3;
+    exp = 7;
     onDestroy = () => {};
     constructor(config: EnemyConfig) {
         this.scene = config.scene;

@@ -8,7 +8,8 @@ export interface ProjectileConfig {
     dirY: number;
     speed?: number;
     color?: number;
-    size?: number;
+    width?: number;
+    height?: number;
 }
 
 export class BaseProjectile {
@@ -18,7 +19,8 @@ export class BaseProjectile {
     dirY: number;
     speed: number;
     color: number;
-    size: number;
+    width: number;
+    height: number;
     private debug: boolean = false;
     private debugLine?: Phaser.GameObjects.Graphics;
 
@@ -26,14 +28,15 @@ export class BaseProjectile {
         this.scene = config.scene;
         this.dirX = config.dirX;
         this.dirY = config.dirY;
-        this.speed = config.speed ?? 600;
+        this.speed = config.speed ?? 850;
         this.color = config.color ?? 0xffffff;
-        this.size = config.size ?? 10;
+        this.width = config.width ?? 10;
+        this.height = config.height ?? 10;
         this.rect = this.scene.add.rectangle(
             config.x,
             config.y,
-            this.size,
-            this.size,
+            this.width,
+            this.height,
             this.color
         );
         this.playStartSound();
@@ -53,8 +56,11 @@ export class BaseProjectile {
     }
 
     move(delta: number) {
+        // Move the projectile
         this.rect.x += this.dirX * this.speed * delta;
         this.rect.y += this.dirY * this.speed * delta;
+        // Rotate the projectile to face its movement direction
+        this.rect.rotation = Math.atan2(this.dirY, this.dirX);
     }
     playStartSound() {
         const key = `basic_fire_${Math.floor(Math.random() * 3) + 1}`;

@@ -26,15 +26,16 @@ export class Game extends Scene {
         right: Phaser.Input.Keyboard.Key;
         up: Phaser.Input.Keyboard.Key;
     };
+    user: UserState = useUserStore.getState(); // Zustand store for user state
     player = {
         model: undefined as Phaser.GameObjects.Rectangle | undefined,
         position: { x: 0, y: 0 },
         velocity: { x: 0, y: 0 },
-        speed: useUserStore.getState().movement_speed,
+        speed: this.user.movement_speed,
         acceleration: 1200,
         friction: 1000,
-        hp: useUserStore.getState().health,
-        damage: useUserStore.getState().damage,
+        hp: this.user.health,
+        damage: this.user.damage,
         invulnerableUntil: 0,
         colors: {
             default: 0x39ff14,
@@ -45,23 +46,21 @@ export class Game extends Scene {
     maxEnemies = 2; // max number of enemies on screen
     enemyMovementSpeed = 50;
     playerProjectiles: any[] = [];
-    playerProjectileSpeed = 1000; // pixels/sec
+
     projectileFireRates = {
-        rocket: 2000, // ms
-        basic: 500, // ms
+        basic_laser: Infinity, // ms
+        rockets: Infinity,
     };
     projectileLastFire = {
-        rocket: 0,
-        basic: 0,
+        rockets: 0,
+        basic_laser: 0,
     };
     spawnTimestamp = Date.now() + 1; // initial spawn time, 3 seconds from now
     projectileDamage = {
         rocket: 5,
         basic: 1,
     };
-    rocketCount = 1;
-    rocketMargin = 40;
-    rocketDelay = 80;
+
     unsubscribeUserStore: () => void; // For Zustand store subscription
 
     /**
@@ -70,11 +69,11 @@ export class Game extends Scene {
      */
     difficultyConfig = {
         // Base HP for base enemy type
-        baseEnemyHp: 3,
+        baseEnemyHp: 2,
         // Base damage for base enemy type
         baseEnemyDamage: 1,
         // Base HP for big enemy type
-        bigEnemyHp: 10,
+        bigEnemyHp: 5,
         // Base damage for big enemy type
         bigEnemyDamage: 3,
         // How much HP increases per minute of game time
@@ -86,15 +85,15 @@ export class Game extends Scene {
         // Maximum multiplier for damage scaling
         maxDamageMultiplier: 5,
         // Starting max enemies on screen
-        baseMaxEnemies: 2,
+        baseMaxEnemies: 4,
         // How many more enemies are allowed per minute
-        maxEnemiesIncreasePerMinute: 1, // Enemies added per minute
+        maxEnemiesIncreasePerMinute: 4, // Enemies added per minute
         // Maximum cap for enemies on screen
         maxEnemiesCap: 20,
         // Minimum allowed interval between spawns (ms)
         minSpawnInterval: 250, // ms
         // How much to decrease spawn interval per minute (ms)
-        spawnIntervalDecreasePerMinute: 100, // ms decrease per minute
+        spawnIntervalDecreasePerMinute: 50, // ms decrease per minute
     };
     gameStartTime = Date.now();
 
@@ -120,7 +119,6 @@ export class Game extends Scene {
         // Subscribe to Zustand store for live stat updates
 
         this.unsubscribeUserStore = useUserStore.subscribe((user) => {
-            console.log("User state updated:", user);
             this.player.hp = user.health;
             this.player.damage = user.damage;
             this.player.speed = user.movement_speed;
@@ -130,6 +128,8 @@ export class Game extends Scene {
             loop: true,
             volume: 0.2,
         });
+
+        this.setupEventListeners();
     }
     loadSounds() {
         this.load.audio("rocket_fire", "sounds/rocket-fire.wav");
@@ -144,9 +144,16 @@ export class Game extends Scene {
     }
 
     setupEventListeners() {
-        this.game.events.on(EVENTS.USER_UPDATE, (data: UserState) => {});
+        EventBus.on(EVENTS.GAME_PAUSE, () => {
+            this.scene.pause();
+        });
+        EventBus.on(EVENTS.GAME_RESUME, () => {
+            this.scene.resume();
+        });
     }
     setupPlayer() {
+        const currUser = useUserStore.getInitialState();
+        this.user = currUser;
         this.player.position = {
             x: this.cameras.main.centerX,
             y: this.cameras.main.centerY,
@@ -166,13 +173,39 @@ export class Game extends Scene {
         this.player.hp = user.health;
         this.player.damage = user.damage;
         this.player.speed = user.movement_speed;
+
+          if (user.upgrades.rockets?.enabled) {
+                this.projectileFireRates.rockets = user.upgrades.rockets
+                    .attack_speed as number;
+            }
+            if (user.upgrades.basic_laser?.enabled) {
+                this.projectileFireRates.basic_laser =
+                    user.upgrades.basic_laser.attack_speed as number;
+            }
+        
+
+
+        EventBus.on(EVENTS.USER_UPDATE, (updatedUser: UserState) => {
+            this.user = updatedUser;
+            this.player.hp = updatedUser.health;
+            this.player.damage = updatedUser.damage;
+            this.player.speed = updatedUser.movement_speed;
+            if (updatedUser.upgrades.rockets?.enabled) {
+                this.projectileFireRates.rockets = updatedUser.upgrades.rockets
+                    .attack_speed as number;
+            }
+            if (updatedUser.upgrades.basic_laser?.enabled) {
+                this.projectileFireRates.basic_laser =
+                    updatedUser.upgrades.basic_laser.attack_speed as number;
+            }
+        });
     }
     update() {
         this.updatePlayerPosition();
         this.spawnEnemyAtRandomPosition();
         this.moveEnemiesTowardPlayer();
         this.checkCollisionWithEnemies();
-        this.fireProjectile();
+        this.fireProjectileHandler();
         this.moveProjectiles();
         // Update logic for the game scene can be added here
     }
@@ -340,7 +373,8 @@ export class Game extends Scene {
             damage = Math.round(this.difficultyConfig.bigEnemyDamage * dmgMult);
         }
         // Pass scaled stats to enemy constructor
-        const enemy = new EnemyClass({ scene: this, x, y, hp, damage });
+        const color = Phaser.Display.Color.RandomRGB().color;
+        const enemy = new EnemyClass({ scene: this, x, y, hp, damage, color, });
         this.enemies.push(enemy);
     }
 
@@ -408,7 +442,7 @@ export class Game extends Scene {
      * Fires all projectiles from the player towards the closest enemy.
      * Calls individual fire methods for each projectile type.
      */
-    fireProjectile() {
+    fireProjectileHandler() {
         const now = Date.now();
         if (this.enemies.length === 0) return;
         let closestEnemy = this.enemies[0];
@@ -430,8 +464,9 @@ export class Game extends Scene {
         if (len === 0) return;
         const dirX = dx / len;
         const dirY = dy / len;
-
-        this.fireRocketProjectiles(now, px, py, closestEnemy);
+        if (this.user.upgrades.rockets.enabled) {
+            this.fireRocketProjectiles(now, px, py, closestEnemy);
+        }
         this.fireBasicProjectile(now, px, py, dirX, dirY);
     }
 
@@ -444,16 +479,21 @@ export class Game extends Scene {
         py: number,
         closestEnemy: BaseEnemy
     ) {
+        const rocket_properties = this.user.upgrades.rockets;
         if (!this.player.model) {
             return;
         }
         if (
             now >
-            this.projectileLastFire.rocket + this.projectileFireRates.rocket
+            this.projectileLastFire.rockets + this.projectileFireRates.rockets
         ) {
-            this.projectileLastFire.rocket = now;
+            this.projectileLastFire.rockets = now;
             const rocketSpawns: { x: number; y: number }[] = [];
-            for (let i = 0; i < this.rocketCount; i++) {
+            for (
+                let i = 0;
+                i < Number(rocket_properties.projectile_amount ?? 0);
+                i++
+            ) {
                 let spawnX: number,
                     spawnY: number,
                     attempts = 0,
@@ -472,7 +512,10 @@ export class Game extends Scene {
                         const dist = Math.sqrt(
                             (spawnX - prev.x) ** 2 + (spawnY - prev.y) ** 2
                         );
-                        if (dist < this.rocketMargin) {
+                        const margin = Number(
+                            rocket_properties.projectile_margin ?? 0
+                        );
+                        if (!isNaN(margin) && dist < margin) {
                             valid = false;
                             break;
                         }
@@ -490,10 +533,10 @@ export class Game extends Scene {
                             targetX: closestEnemy.rect.x,
                             targetY: closestEnemy.rect.y,
                             arcHeight: 250,
-                            speed: 600,
+                            speed: rocket_properties.projectile_speed as number,
                         }),
                     });
-                }, i * this.rocketDelay);
+                }, i * Number(rocket_properties.rocket_delay ?? 0));
             }
         }
     }
@@ -508,11 +551,12 @@ export class Game extends Scene {
         dirX: number,
         dirY: number
     ) {
+        const basic_laser_properties = this.user.upgrades.basic_laser;
         if (
             now >
-            this.projectileLastFire.basic + this.projectileFireRates.basic
+            this.projectileLastFire.basic_laser + this.projectileFireRates.basic_laser
         ) {
-            this.projectileLastFire.basic = now;
+            this.projectileLastFire.basic_laser = now;
             this.playerProjectiles.push({
                 type: "basic",
                 instance: new BaseProjectile({
@@ -521,9 +565,10 @@ export class Game extends Scene {
                     y: py,
                     dirX,
                     dirY,
-                    speed: this.playerProjectileSpeed,
+                    speed: basic_laser_properties.projectile_speed as number,
                     color: 0xffffff,
-                    size: 10,
+                    width: basic_laser_properties.projectile_width as number,
+                    height: basic_laser_properties.projectile_height as number,
                 }),
             });
         }
@@ -617,45 +662,38 @@ export class Game extends Scene {
                         this.onEnemyHit(enemy);
                         console.log("Enemy killed!");
                     } else {
-                        
                     }
                     break;
                 }
             }
         }
     }
+    /**
+     * Handles logic when an enemy is killed by the player.
+     * - Awards experience to the player based on the enemy's exp value.
+     * - Handles player leveling up, including multiple level-ups if enough exp is gained.
+     * - Caps the player's level and experience at the maximum defined in PLAYER_LEVELS.
+     * - Updates the Zustand user store with new experience, level, and next level experience requirements.
+     *
+     * @param enemy The enemy instance that was killed.
+     */
     onEnemyHit(enemy: BaseEnemy) {
         // Get exp value for this enemy type (default to 1 if not set)
         const exp = (enemy as any).exp ?? 1;
-        // Get current user state
+
+        // Get current user state from Zustand
         const user = useUserStore.getState();
-        let newExp = user.experience + exp;
-        let newLevel = user.level;
-        let nextLevelExp = user.next_level_experience;
-        // Find max level from PLAYER_LEVELS
-        const maxLevel = Math.max(...Object.keys(PLAYER_LEVELS).map(Number));
-        // Level up as many times as needed, but cap at maxLevel
-        while (newExp >= nextLevelExp && newLevel < maxLevel) {
-            newExp -= nextLevelExp;
-            newLevel += 1;
-            if (PLAYER_LEVELS[newLevel]) {
-                nextLevelExp = PLAYER_LEVELS[newLevel].next_level_experience;
-            } else {
-                nextLevelExp = Math.floor(nextLevelExp * 1.2); // fallback scaling
-            }
+        let newExp = (user.experience + exp) 
+        const hasNextLevel = PLAYER_LEVELS[user.level + 1];
+        if (newExp >= user.next_level_experience && hasNextLevel) {
+            EventBus.emit(EVENTS.USER_LEVEL_UP);
+        } else {
+            // Update user state with new experience
+            useUserStore.setState({
+                ...user,
+                experience: newExp,
+            });
         }
-        // If at max level, cap exp and nextLevelExp
-        if (newLevel >= maxLevel) {
-            newLevel = maxLevel;
-            newExp = 0; // or keep as is if you want to show overflow
-            nextLevelExp = Infinity;
-        }
-        useUserStore.setState((state) => ({
-            ...state,
-            experience: newExp,
-            level: newLevel,
-            next_level_experience: nextLevelExp,
-        }));
     }
     // Add cleanup for the subscription
     destroy() {

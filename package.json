@@ -27,6 +27,7 @@
         "build-nolog": "vite build --config vite/config.prod.mjs"
     },
     "dependencies": {
+        "@headlessui/react": "^2.2.4",
         "@tailwindcss/postcss": "^4.1.10",
         "@tailwindcss/vite": "^4.1.10",
         "phaser": "^3.90.0",
